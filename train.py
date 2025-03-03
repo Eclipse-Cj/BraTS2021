@@ -14,10 +14,36 @@ from utils import (
     AverageMeter, calculate_metrics, save_checkpoint, 
     load_checkpoint, visualize_results, DiceLoss
 )
+from model import SwinUTransBTS
 
-def train_epoch(model, train_loader, criterion, optimizer, epoch, device, writer):
-    """Train for one epoch"""
+class CombinedLoss(nn.Module):
+    """
+    Combined Dice Loss and Cross Entropy Loss with adjustable weights from config
+    """
+    def __init__(self, config):
+        super(CombinedLoss, self).__init__()
+        self.dice_weight = config.DICE_WEIGHT
+        self.ce_weight = config.CE_WEIGHT
+        self.dice_loss = DiceLoss()
+        
+    def forward(self, outputs, targets):
+        # For Dice Loss, we use the output probabilities directly (after softmax)
+        dice = self.dice_loss(outputs, targets)
+        
+        # For CE Loss with softmax outputs, we use NLLLoss with log probabilities
+        log_probs = torch.log(outputs + 1e-10)  # Add small epsilon to avoid log(0)
+        ce = F.nll_loss(log_probs, targets)
+        
+        # Combine losses with weights from config
+        return self.dice_weight * dice + self.ce_weight * ce
+
+def train_epoch(model, train_loader, criterion, optimizer, epoch, device, writer, 
+               config):
+    """Train for one epoch with gradient accumulation"""
     model.train()
+    
+    # Use effective batch size of 16 through gradient accumulation
+    accumulation_steps = 16 // config.BATCH_SIZE  # Ensure effective batch size of 16
     
     # Metrics
     loss_meter = AverageMeter()
@@ -29,6 +55,9 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, device, writer
     # Use tqdm progress bar
     pbar = tqdm(enumerate(train_loader), total=len(train_loader), desc=f"Epoch {epoch} [Train]")
     
+    # Reset gradients at the beginning
+    optimizer.zero_grad()
+    
     for i, (images, targets) in pbar:
         # Move data to device
         images = images.to(device)
@@ -36,19 +65,22 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, device, writer
         
         # Forward pass
         outputs = model(images)
-        loss = criterion(outputs, targets)
+        loss = criterion(outputs, targets) / accumulation_steps  # Scale loss
         
-        # Backward pass and optimize
-        optimizer.zero_grad()
+        # Backward pass (accumulate gradients)
         loss.backward()
-        optimizer.step()
+        
+        # Update weights only every accumulation_steps
+        if (i + 1) % accumulation_steps == 0 or (i + 1) == len(train_loader):
+            optimizer.step()
+            optimizer.zero_grad()
         
         # Get predictions and calculate metrics
         preds = torch.argmax(outputs, dim=1)
         metrics = calculate_metrics(targets, preds)
         
-        # Update meters
-        loss_meter.update(loss.item())
+        # Update meters (use the full loss value for display)
+        loss_meter.update(loss.item() * accumulation_steps)
         dice_meter.update(metrics['dice']['mean'])
         batch_time.update(time.time() - end)
         end = time.time()
@@ -63,7 +95,7 @@ def train_epoch(model, train_loader, criterion, optimizer, epoch, device, writer
         # Log to TensorBoard (every 20 steps)
         step = epoch * len(train_loader) + i
         if i % 20 == 0:
-            writer.add_scalar('Loss/train_step', loss.item(), step)
+            writer.add_scalar('Loss/train_step', loss_meter.val, step)
             writer.add_scalar('Dice/train_step', metrics['dice']['mean'], step)
     
     # Log epoch metrics
@@ -178,9 +210,11 @@ def train(model, train_loader, test_loader, config, resume_path=None):
     # Create TensorBoard writer
     writer = SummaryWriter(log_dir=config.LOG_DIR)
     
-    # Loss function and optimizer
-    criterion = DiceLoss()
-    optimizer = optim.Adam(
+    # Loss function using weights from config
+    criterion = CombinedLoss(config)
+    
+    # Use AdamW optimizer with learning rate and weight decay from config
+    optimizer = optim.AdamW(
         model.parameters(), 
         lr=config.LEARNING_RATE, 
         weight_decay=config.WEIGHT_DECAY
@@ -201,10 +235,10 @@ def train(model, train_loader, test_loader, config, resume_path=None):
     # Training loop
     print("Starting training...")
     for epoch in range(start_epoch, config.NUM_EPOCHS):
-        # Train for one epoch
+        # Train for one epoch with gradient accumulation based on config
         train_metrics = train_epoch(
-                    model, train_loader, criterion, optimizer, epoch, device, writer
-                )
+            model, train_loader, criterion, optimizer, epoch, device, writer, config
+        )
         
         # Validate every VAL_INTERVAL epochs or at the last epoch
         if (epoch + 1) % config.VAL_INTERVAL == 0 or epoch == config.NUM_EPOCHS - 1:

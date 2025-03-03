@@ -5,7 +5,7 @@ import numpy as np
 import random
 
 from config import config
-from model import VoluFormerUNet
+from model import SwinUTransBTS
 from dataset import get_loaders
 from train import train
 from validate import validate_model, load_model_for_inference
@@ -21,7 +21,7 @@ def set_seed(seed):
 
 def parse_args():
     """Parse command line arguments"""
-    parser = argparse.ArgumentParser(description='VoluFormer-UNet for Brain Tumor Segmentation')
+    parser = argparse.ArgumentParser(description='SwinUTransBTS for Brain Tumor Segmentation')
     parser.add_argument('--mode', type=str, default='train', choices=['train', 'validate'],
                        help='Mode: train or validate')
     parser.add_argument('--resume', type=str, default=None,
@@ -49,7 +49,15 @@ def main():
     
     # Create model
     print("Creating model...")
-    model = VoluFormerUNet(config)
+    model = SwinUTransBTS(
+        in_channels=config.IN_CHANNELS,          # T1, T1ce, T2, FLAIR
+        out_channels=config.OUT_CHANNELS,         # Background, NCR/NET, ED, ET
+        embed_dim=config.EMDED_DIM,       # Base dimension
+        window_size=7,                           # Window size for attention
+        depths=[2, 2, 2, 2],                     # Depth of each stage
+        num_heads=config.NUM_HEADS,                # Number of attention heads in each stage
+        dropout=config.DROPOUT_RATE              # Dropout rate from config
+    )
     
     # Get data loaders
     print("Loading data...")

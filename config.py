@@ -13,18 +13,17 @@ class Config:
     # Data parameters
     PATCH_SIZE = (128, 128, 128)
     IN_CHANNELS = 4  # T1, T1ce, T2, FLAIR
-    NUM_CLASSES = 4  # Background + 3 tumor regions
-
+    OUT_CHANNELS = 4  # Background + 3 tumor regions
+    
     
     # Model parameters
-    BASE_FILTERS = 8  # Base number of filters
-    TRANSFORMER_DIM = 128  # Transformer embedding dimension
-    TRANSFORMER_HEADS = 8  # Number of attention heads
-    TRANSFORMER_LAYERS = 2  # Number of transformer layers
-    DROPOUT_RATE = 0.1  # Dropout rate
+    DROPOUT_RATE = 0.2  # Dropout rate
+    WINDOW_SIZE  = 4
+    NUM_HEADS=[4, 4, 4, 4]
+    EMDED_DIM = 32
     
     # Training parameters
-    BATCH_SIZE = 1  # Adjust based on GPU memory
+    BATCH_SIZE = 1 
     NUM_WORKERS = 4  # Number of data loading workers
     NUM_EPOCHS = 300
     LEARNING_RATE = 1e-4
