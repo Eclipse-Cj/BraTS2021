@@ -1,4 +1,3 @@
-The first edition is another model. It doesn't perform well. Please ignore.
 
 ## Model Overview
 
